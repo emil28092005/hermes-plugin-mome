@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pickle
 import re
 import threading
 import time
@@ -131,8 +132,9 @@ class MemoryExpert:
 class MemoryRouter:
     """Online-learning роутер экспертов через SGDClassifier."""
 
-    def __init__(self, embedder: TinyEmbedder):
+    def __init__(self, embedder: TinyEmbedder, router_dir: Optional[Path] = None):
         self.embedder = embedder
+        self.router_dir = router_dir
         self.classifier = SGDClassifier(
             loss='log_loss', penalty='l2', alpha=0.001,
             learning_rate='adaptive', eta0=0.01,
@@ -140,6 +142,7 @@ class MemoryRouter:
         )
         self._fitted = False
         self._classes = np.array(EXPERT_NAMES)
+        self._load()
 
     def predict(self, query: str, top_k: int = 2) -> List[tuple[str, float]]:
         emb = self.embedder.embed(query).reshape(1, -1)
@@ -158,6 +161,37 @@ class MemoryRouter:
             self._fitted = True
         else:
             self.classifier.partial_fit(emb, target)
+        self._save()
+
+    def _save(self) -> None:
+        if not self.router_dir:
+            return
+        self.router_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "fitted": self._fitted,
+            "classes": self._classes.tolist(),
+        }
+        if self._fitted:
+            with open(self.router_dir / "classifier.pkl", "wb") as f:
+                pickle.dump(self.classifier, f)
+        with open(self.router_dir / "meta.json", "w") as f:
+            json.dump(data, f)
+
+    def _load(self) -> None:
+        if not self.router_dir:
+            return
+        meta_path = self.router_dir / "meta.json"
+        if not meta_path.exists():
+            return
+        with open(meta_path) as f:
+            data = json.load(f)
+        self._fitted = data.get("fitted", False)
+        self._classes = np.array(data.get("classes", EXPERT_NAMES))
+        if self._fitted:
+            clf_path = self.router_dir / "classifier.pkl"
+            if clf_path.exists():
+                with open(clf_path, "rb") as f:
+                    self.classifier = pickle.load(f)
 
 
 # ─── MoME Engine ───────────────────────────────────────────────────────────
@@ -169,7 +203,7 @@ class MomeEngine:
         self.store_dir = store_dir
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self.embedder = TinyEmbedder(dim=384)
-        self.router = MemoryRouter(self.embedder)
+        self.router = MemoryRouter(self.embedder, self.store_dir / "_router")
         self.experts = {
             name: MemoryExpert(name, self.embedder, store_dir)
             for name in EXPERT_NAMES
@@ -186,10 +220,12 @@ class MomeEngine:
                 parts.append(f"[{name.upper()}] (conf: {confidence:.2f}):\n{lines}")
         return "\n\n".join(parts) if parts else ""
 
-    def store_fact(self, expert: str, fact: str) -> bool:
-        """Сохранить факт в указанного эксперта."""
+    def store_fact(self, expert: str, fact: str, query: str = "") -> bool:
+        """Сохранить факт в указанного эксперта и опционально обучить роутер."""
         if expert in self.experts and fact:
             self.experts[expert].write(fact)
+            if query:
+                self.learn(query, {expert: 1.0})
             return True
         return False
 
@@ -227,7 +263,7 @@ class MomeEngine:
 
         stored = 0
         for expert, fact in facts:
-            if self.store_fact(expert, fact):
+            if self.store_fact(expert, fact, query):
                 stored += 1
                 logger.info("  💾 [%s] запомнил: %s", expert, fact[:60])
         return stored

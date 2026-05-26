@@ -65,6 +65,10 @@ MEMORY_STORE_SCHEMA = {
                 "type": "string",
                 "description": "The fact to remember.",
             },
+            "query": {
+                "type": "string",
+                "description": "Optional user query that triggered this fact. Used to train the router (query → expert mapping).",
+            },
         },
         "required": ["expert", "fact"],
     },
@@ -247,10 +251,12 @@ class MomeProvider(MemoryProvider):
     def _handle_store(self, args: Dict[str, Any]) -> str:
         expert = args.get("expert", "")
         fact = args.get("fact", "")
+        query = args.get("query", "")
         if expert in self._engine.experts and fact:
-            self._engine.experts[expert].write(fact)
+            self._engine.store_fact(expert, fact, query)
+            trained = " (router trained)" if query else ""
             return json.dumps({
-                "result": f"Stored in [{expert}]",
+                "result": f"Stored in [{expert}]{trained}",
                 "fact": fact,
             })
         return json.dumps({
