@@ -1,0 +1,12 @@
+name: mome
+description: "MoME — Mixture of Memory Experts. Sparse-gated personal memory with online-learning router for Hermes Agent."
+version: 0.1.0
+author: Emil Shanaty
+homepage: https://github.com/emil28092005/hermes-plugin-mome
+repository: https://github.com/emil28092005/hermes-plugin-mome
+tags: [memory, mome, moe, experts, personalization, routing]
+license: MIT
+python:
+  requirements:
+    - numpy>=1.24
+    - scikit-learn>=1.3
